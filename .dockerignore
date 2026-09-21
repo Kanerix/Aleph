@@ -1,0 +1,37 @@
+# Git
+.git
+.githooks
+.gitignore
+
+# Docker files and folders
+.dockerignore
+Dockerfile
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Installer logs
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Unit test
+.pytest_cache/
+tests
+
+# Translations
+*.mo
+*.pot
+
+# Ruff
+.ruff_cache
+
+# Environments
+.venv
+
+# Other
+CHANGELOG.md
+README.md
+ruff.toml
+.vscode

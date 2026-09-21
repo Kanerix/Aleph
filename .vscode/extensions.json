@@ -1,0 +1,10 @@
+{
+    "recommendations": [
+        "ms-python.python",
+        // "ms-python.pylint", <-- Replaced with `ruff`
+        "charliermarsh.ruff",
+        "tamasfe.even-better-toml",
+        "fill-labs.dependi",
+        "DavidAnson.vscode-markdownlint"
+    ]
+}
