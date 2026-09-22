@@ -1,17 +1,30 @@
 [project]
-name = "python-project-template"
+name = "Aleph"
 version = "0.1.0"
-description = "Add your description here"
+description = "Facial Recognition & Identity Discovery System"
+classifiers = [
+    "Environment :: Console",
+    "Topic :: Multimedia :: Graphics :: Capture",
+    "Topic :: Scientific/Engineering :: Image Recognition",
+]
 authors = [{ name = "Kasper Jønsson", email = "dkkasjoe@hotmail.com" }]
 readme = "README.md"
-urls = { Homepage = "https://github.com/kanerix/python-project-template" }
-requires-python = "~=3.13.0"
+urls = { Homepage = "https://github.com/kanerix/Aleph" }
+requires-python = "~=3.14.0"
 dependencies = [
-    "polars>=1.12.0",
+    "ultralytics>=8.3",
+    "pillow>=9.1",
+    "rawpy>=0.21",
+    "pillow-heif>=0.15",
+    "httpx>=0.28.1",
+    "open-clip-torch>=3.3.0",
+    "numpy>=2.0",
+    "insightface>=2.0",
+    "onnxruntime>=1.30.0",
 ]
 
 [tool.uv]
-default-groups = ["lint"]
+default-groups = ["dev", "lint"]
 
 [dependency-groups]
 dev = [
@@ -20,8 +33,9 @@ dev = [
 lint = [
     "ruff>=0.7.0",
 ]
-docs = [
-    "mkdocs>=1.6.1",
-    "mkdocs-material>=9.5.43",
-    "mkdocstrings>=0.27.0",
-]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ty.environment]
+python = "./.venv"

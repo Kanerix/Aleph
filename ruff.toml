@@ -1,5 +1,8 @@
 [lint]
-select = ["PL", "UP", "D"]
+select = ["E", "F", "I", "B", "PL", "UP", "D"]
 
 [lint.pydocstyle]
 convention = "google"
+
+[lint.per-file-ignores]
+"tests/*" = ["PLR2004"]
