@@ -6,6 +6,7 @@ run separately and re-run on their own:
 
     uv run python -m src.main extract data/ --out faces
     uv run python -m src.main profile faces/ --out profiles
+    uv run python -m src.main lookup profiles/ known/ --out identities
 
 Run `python -m src.main <stage> --help` for the flags of one stage.
 """
@@ -13,9 +14,10 @@ Run `python -m src.main <stage> --help` for the flags of one stage.
 import argparse
 
 from .extract import cli as extract_cli
+from .lookup import cli as lookup_cli
 from .profiles import cli as profiles_cli
 
-STAGES = (extract_cli, profiles_cli)
+STAGES = (extract_cli, profiles_cli, lookup_cli)
 
 
 def build_parser() -> argparse.ArgumentParser:

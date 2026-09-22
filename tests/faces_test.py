@@ -1,8 +1,14 @@
 """Tests for `src.faces`, without loading the model."""
 
 import numpy as np
+import pytest
 
 from src import faces
+
+
+def unit(*angles: float) -> np.ndarray:
+    """Unit vectors on a circle, so cosine similarity is the cosine of the gap."""
+    return np.array([[np.cos(a), np.sin(a)] for a in angles])
 
 
 class _Detection:
@@ -69,3 +75,24 @@ class TestGender:
         """The keyword is a word, not the single letter the model returns."""
         assert faces.GENDER["M"] == "man"
         assert faces.GENDER["F"] == "woman"
+
+
+class TestAverage:
+    """Collapsing several views of one person into one vector."""
+
+    def test_one_vector_is_returned_unchanged(self):
+        """A person seen once is their own reference."""
+        assert np.allclose(faces.average(unit(0.3)), unit(0.3)[0])
+
+    def test_the_mean_is_renormalised(self):
+        """Matching is a dot product, so the result has to stay a unit vector."""
+        assert np.linalg.norm(faces.average(unit(0.0, 1.0))) == pytest.approx(1.0)
+
+    def test_the_mean_sits_between_its_inputs(self):
+        """Two views of one face average to the face between them."""
+        assert np.allclose(faces.average(unit(-0.4, 0.4)), unit(0.0)[0])
+
+    def test_opposites_do_not_divide_by_zero(self):
+        """Vectors that cancel out give a zero row rather than a crash."""
+        opposite = np.array([[1.0, 0.0], [-1.0, 0.0]])
+        assert np.allclose(faces.average(opposite), [0.0, 0.0])

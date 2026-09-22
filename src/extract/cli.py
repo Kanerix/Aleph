@@ -163,6 +163,18 @@ def add_parser(subparsers) -> None:
     )
 
 
+def _save_vectors(path: Path, vectors, verify: bool) -> None:
+    """Save the identity vectors, or clear the ones an earlier run left.
+
+    `--no-verify` reads no faces, so there is nothing to save and a file from a
+    previous run would be matched against the crops this one just wrote.
+    """
+    if verify:
+        manifests.write_vectors(path, vectors)
+    else:
+        path.unlink(missing_ok=True)
+
+
 def run(args) -> int:
     """Crop every usable face out of the given photos."""
     images = iter_images(args.inputs, exclude=args.out)
@@ -196,13 +208,18 @@ def run(args) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
     stems = unique_stems(images)
     manifest: list[dict] = []
+    vectors = []
     for i, path in enumerate(images, start=1):
         print(f"[{i}/{len(images)}] {path}")
         try:
-            manifest += process_image(path, stems[path], detector, reader, args)
+            entries, read = process_image(path, stems[path], detector, reader, args)
         except Exception as exc:  # keep going through a batch of photos
             print(f"  ! failed: {exc}", file=sys.stderr)
+            continue
+        manifest += entries
+        vectors += read
 
     manifests.write(args.out / manifests.CROPS, manifest)
+    _save_vectors(args.out / manifests.VECTORS, vectors, args.verify)
     print(f"\nDone: {len(manifest)} crops in {args.out}/")
     return 0

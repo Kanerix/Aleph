@@ -80,23 +80,32 @@ def run(args) -> int:
         print(f"No crops listed in {args.crops / manifests.CROPS}")
         return 1
 
+    saved = args.crops / manifests.VECTORS
+    cached = manifests.read_vectors(saved, len(entries)) if saved.exists() else None
+
     device = torch_device(pick_device(args.device))
-    print(f"Loading {args.model} on {device} and the face model ...")
+    print(f"Loading {args.model} on {device} ...")
     encoder = Encoder(device, args.model, args.weights)
-    reader = FaceReader(device)
+
+    if cached is None:
+        print("Reading the faces, as --no-verify left no vectors to reuse ...")
+        faces = pipeline.read_faces(entries, args.crops, FaceReader(device))
+    else:
+        faces = pipeline.saved_faces(entries, cached)
 
     vectors, described = pipeline.describe(
-        entries, args.crops, encoder, reader, args.batch
+        entries, args.crops, encoder, faces, args.batch
     )
     if not described:
         print("No faces recognised in any crop", file=sys.stderr)
         return 1
     print(f"\n{len(described)}/{len(entries)} crops held a recognisable face")
 
-    profiles = pipeline.build(described, vectors, args)
+    profiles, identities = pipeline.build(described, vectors, args)
     args.out.mkdir(parents=True, exist_ok=True)
     pipeline.write_folders(profiles, args.crops, args.out)
     manifests.write(args.out / manifests.PROFILES, profiles)
+    manifests.write_vectors(args.out / manifests.VECTORS, identities)
 
     _summarise(profiles)
     print(f"\nDone: {len(profiles)} profiles in {args.out}/")

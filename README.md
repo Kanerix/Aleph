@@ -9,7 +9,7 @@ profile belongs to it.
 | --- | --- | --- |
 | 1. `extract`: one cropped portrait per person in a photo | implemented | [`src/extract/`](src/extract/) |
 | 2. `profile`: group the crops of one person and tag them | implemented | [`src/profiles/`](src/profiles/) |
-| 3. Identity discovery: match a profile to a social media account | not implemented yet | |
+| 3. `lookup`: put a name on a profile from a gallery you supply | implemented | [`src/lookup/`](src/lookup/) |
 
 Each stage is a subcommand that reads the folder the stage before it wrote,
 including its manifest, so stages can be re-run on their own.
@@ -22,18 +22,22 @@ Prerequisites: [uv](https://docs.astral.sh/uv/).
 uv sync
 uv run python -m src.main extract stands.jpg      # first run downloads the weights
 uv run python -m src.main profile faces/
+uv run python -m src.main lookup profiles/ known/
 ```
 
 `extract` writes one crop per person as `faces/<photo>_001.jpg`, framed with the
 head near the top and the torso below, plus `faces/manifest.json`. `profile`
 reads that folder and writes `profiles/p001/` per person, plus
-`profiles/profiles.json`.
+`profiles/profiles.json`. `lookup` compares those profiles with a folder of
+reference photos of people you already know and writes
+`identities/identities.json`.
 
 ```sh
 uv run python -m src.main extract DCIM/ --aspect 3:4 --min-out 512
 uv run python -m src.main extract shoot/*.ARW --raw-half   # quick pass over a card
 uv run python -m src.main extract stands.jpg --annotate    # preview what was found
 uv run python -m src.main profile faces/ --threshold 0.5
+uv run python -m src.main lookup profiles/ squad/ --threshold 0.5
 uv run python -m src.main --help
 ```
 
@@ -65,7 +69,8 @@ uv run python -m src.main --help
    claiming a person on a raised hand, a banner or a stretch of fence, and a
    model that only knows about faces does. On the sample set this dropped 189 of
    630 crops, so a third of the output was not a person at all. Turn it off with
-   `--no-verify`.
+   `--no-verify`. The identity vector read here is kept, which is what saves
+   stages 2 and 3 from reading the same face again.
 
 Use `--annotate` to write a full-size preview with the crop boxes (green) and
 detected heads (red) drawn on, which makes tuning obvious.
@@ -87,7 +92,7 @@ detected heads (red) drawn on, which makes tuning obvious.
 | `--frame-width` | `3.2` | Max crop width in head-widths |
 | `--no-facing-check` | off | Keep backs of heads too |
 | `--no-require-face` | off | Crop every detected person, face or not |
-| `--no-verify` | off | Keep crops the face model finds no face in |
+| `--no-verify` | off | Keep crops the face model finds no face in, and save no vectors |
 | `--annotate` | off | Save a preview with boxes drawn |
 
 **Getting more faces:** `--model yolo11x-pose.pt --tile 512 --conf 0.15`.
@@ -95,8 +100,16 @@ detected heads (red) drawn on, which makes tuning obvious.
 
 `faces/manifest.json` is always written, because it is the boundary between
 this stage and the next. It records the source photo, crop box, confidence,
-head box, facial keypoint count and facing score per crop, so stage 2 knows
-where the head is inside each crop without re-running detection.
+head box, facial keypoint count, facing score and the face model's reading of
+gender per crop, so stage 2 knows where the head is inside each crop without
+re-running detection.
+
+The 512-d identity vector of each crop goes in `faces/vectors.npy` beside it,
+one row per manifest entry, in the same order. It lives in its own file because
+one vector is 14 KB and 532 lines of indented JSON, which would bury everything
+in the manifest that a person actually reads. Stage 2 uses these rows instead
+of running the face model a second time, and re-reads the faces itself only
+when `--no-verify` left none.
 
 The device is auto-detected (CUDA, then Apple `mps`, then CPU); override it
 with `--device cpu|mps|0`.
@@ -136,12 +149,13 @@ inconsistently exposed. Turn it on with `--raw-auto-bright`.
 uv run python -m src.main profile faces/ --out profiles
 ```
 
-1. **Recognition**: the same `buffalo_l` model stage 1 verified with detects
-   the face inside each crop and returns a 512-d ArcFace vector, plus gender.
-   When a crop holds more than one face, the head box from stage 1 decides which
-   of them the crop is actually of, so a neighbour caught at the edge is not
-   mistaken for the subject. A crop it finds nothing in is dropped, which also
-   covers a folder extracted with `--no-verify`.
+1. **Recognition**: stage 1 already read every crop with the `buffalo_l` face
+   model to verify it, so the 512-d ArcFace vector and the gender it found come
+   straight out of `faces/vectors.npy` and the manifest. The face model is not
+   loaded here at all unless the crops were extracted with `--no-verify`, in
+   which case this stage does the reading, using the head box from stage 1 to
+   decide which face a crop holding more than one is actually of. A crop with
+   no face in it is dropped.
 2. **Clustering**: single-linkage over face pairs above `--threshold`, closest
    pair first, with one constraint: two crops from the *same* photo are never
    merged, because stage 1 already de-duplicated within a photo, so they must be
@@ -170,6 +184,9 @@ entry in `profiles/profiles.json`:
   "colours": ["black", "dark blue"]
 }
 ```
+
+The averaged identity vector of each profile is saved in `profiles/vectors.npy`
+in the same order, which is what stage 3 matches against its gallery.
 
 ### Why two models
 
@@ -201,13 +218,87 @@ The text printed on a shirt is **not** read. CLIP has a yes/no `printed shirt`
 prompt and nothing more, because it cannot reliably read text. Real OCR needs
 another dependency and another model download.
 
+## Stage 3: lookup
+
+`lookup` puts a name on a profile by comparing it with photos of people you
+already have.
+
+```sh
+uv run python -m src.main lookup profiles/ known/ --out identities
+```
+
+The gallery is a folder you build by hand, either way round:
+
+```text
+known/
+  anna.jpg          one photo, named after the person it shows
+  bo/               or a folder per person, for several photos of them
+    portrait.jpg
+    stand.jpg
+```
+
+1. **References**: every gallery photo is read by the same `buffalo_l` model
+   the earlier stages use. A reference photo is taken to be of the person it is
+   filed under, so the surest face in it wins and anyone else in the frame is
+   ignored. Several photos of one person are averaged into one vector, which
+   makes the reference less dependent on the angle of a single photo.
+2. **Profile vectors**: stage 2 averaged each profile's crops into one vector
+   and saved it in `profiles/vectors.npy`, so no crop is read again here. A
+   lookup can therefore be re-run against a different gallery for the cost of
+   reading the gallery.
+3. **Matching**: cosine similarity against every reference. The closest one
+   above `--threshold` names the profile, and the runner-up is recorded beside
+   it, because a winner at 0.51 with a second place at 0.49 means the gallery
+   cannot tell those two people apart.
+
+Every profile gets an entry in `identities/identities.json`, matched or not:
+
+```json
+{
+  "id": "p002",
+  "appearances": 4,
+  "photos": ["data/fck fans 6.JPG", "data/fck fans 7.ARW"],
+  "match": "anna",
+  "score": 0.612,
+  "runner_up": { "name": "bo", "score": 0.204 }
+}
+```
+
+An unmatched profile keeps the score it reached, so a threshold set slightly
+too high is visible instead of silent.
+
+### Common options
+
+| Flag | Default | Notes |
+| --- | --- | --- |
+| `-o, --out` | `identities` | Output folder |
+| `--threshold` | `0.45` | Face similarity needed before a profile is named |
+| `--device` | `auto` | `cpu`, `mps` or a cuda index |
+
+Unlike stage 2, there is no head box to go by in the gallery, so the surest
+face in each reference photo is used. A profile's own vector is the average of
+its crops, which is what limits the damage when a neighbour caught at the edge
+of one crop won it back in stage 1.
+
+### What this stage does not do
+
+It matches against the gallery folder and nothing else. There is no web search,
+no face search service and no social media, so a profile can only ever be named
+after someone whose photo you put in the folder yourself.
+
+That is a deliberate limit. Running crowd photos through a face search engine
+to find the accounts behind them de-anonymises people who never agreed to it,
+and a face vector is biometric data that needs a legal basis before it is
+processed at all (GDPR Art. 9). Keep the gallery to people you have a reason
+and a right to identify.
+
 ## Layout
 
 ```text
 src/main.py             subcommand dispatcher, one per pipeline stage
-src/manifests.py        the JSON artefacts that join one stage to the next
+src/manifests.py        the artefacts that join one stage to the next
 src/device.py           CUDA / mps / CPU selection
-src/faces.py            ArcFace face recognition, used by both stages
+src/faces.py            ArcFace face recognition, used by every stage
 src/extract/            stage 1
   cli.py                flags and entry point for `extract`
   pipeline.py           one photo, from load to written crops
@@ -223,6 +314,11 @@ src/profiles/           stage 2
   colours.py            naming colours without a model
   regions.py            stage 1 boxes mapped onto the saved crop
   clustering.py         grouping crops into people
+src/lookup/             stage 3
+  cli.py                flags and entry point for `lookup`
+  gallery.py            reference faces from a folder of named photos
+  pipeline.py           profile vectors, then the identities manifest
+  matching.py           cosine matching against the gallery
 tests/                  pytest suite, mirroring src/
 pyproject.toml          dependencies, locked in uv.lock
 ruff.toml               lint configuration
@@ -230,8 +326,9 @@ ruff.toml               lint configuration
 
 Model weights are downloaded on first run: the pose model (~40 MB) into the
 working directory, `buffalo_l` (~280 MB) into `~/.insightface` and CLIP into
-the Hugging Face cache. Weights, source photos and the `faces/` and `profiles/`
-output are all gitignored, because they are enormous.
+the Hugging Face cache. Weights, source photos, the gallery and the `faces/`,
+`profiles/` and `identities/` output are all gitignored, because they are
+enormous or personal.
 
 ## Development
 

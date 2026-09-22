@@ -31,6 +31,10 @@ faces/
 # Profiles grouped from the crops
 /profiles/
 
+# Lookup: the reference faces and the names they produced
+known/
+identities/
+
 # Source photos - they are huge, keep them out of the repo
 data/
 *.arw

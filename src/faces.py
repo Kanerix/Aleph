@@ -1,8 +1,10 @@
 """Identity vectors from a face recognition model.
 
-Both stages need this. Stage 1 uses it to throw away the hands, banners and
-stretches of fence that the pose model mistook for people, and stage 2 uses
-the vectors to decide which crops show the same person.
+Every stage needs this. Stage 1 uses it to throw away the hands, banners and
+stretches of fence that the pose model mistook for people, and saves the
+vectors it read on the way, so that stage 2 can group the crops by person and
+stage 3 can match them against known faces without reading the same face
+again.
 
 CLIP describes what a photo looks like, so it puts two supporters in black caps
 behind the same fence next to each other whether or not they are the same man.
@@ -31,6 +33,19 @@ class Face(NamedTuple):
     vector: np.ndarray
     gender: str | None
     score: float
+
+
+def average(vectors) -> np.ndarray:
+    """Collapse several views of one person into a single vector.
+
+    This is what makes a person seen in four photos worth more than any one of
+    the four: the angle, expression and lighting of a single appearance average
+    out while the identity stays. The result is normalised again so that a dot
+    product against it is still a cosine similarity.
+    """
+    mean = np.asarray(vectors).mean(axis=0)
+    norm = float(np.linalg.norm(mean))
+    return mean / norm if norm else mean
 
 
 def providers(available, device: str) -> list[str]:

@@ -5,6 +5,7 @@ from PIL import Image
 
 from src.extract.inference import Detector
 from src.extract.pipeline import process_image
+from src.faces import Face
 
 
 class _Tensor:
@@ -72,7 +73,9 @@ class _FakeReader:
     def read(self, crop, head_box):
         """Fail on the nth crop when n is in `blind_to`, otherwise succeed."""
         self.seen.append((crop.size, head_box))
-        return None if len(self.seen) in self.blind_to else object()
+        if len(self.seen) in self.blind_to:
+            return None
+        return Face(vector=np.full(4, len(self.seen)), gender="man", score=0.8)
 
 
 def test_numbering_has_no_gaps(cli_args, tmp_path):
@@ -85,7 +88,7 @@ def test_numbering_has_no_gaps(cli_args, tmp_path):
         [0.9, 0.8, 0.7],
     )
 
-    entries = process_image(photo, "shot", detector, None, args)
+    entries, _ = process_image(photo, "shot", detector, None, args)
 
     assert [entry["index"] for entry in entries] == [1, 2]
     assert sorted(p.name for p in tmp_path.glob("shot_*.jpg")) == [
@@ -101,7 +104,7 @@ def test_crops_are_named_after_the_given_stem(cli_args, tmp_path):
     photo = _photo(tmp_path / "IMG_0001.jpg")
     detector = _FakeDetector([(100, 200, 200, 500)], [0.9])
 
-    entries = process_image(photo, "IMG_0001-2", detector, None, args)
+    entries, _ = process_image(photo, "IMG_0001-2", detector, None, args)
 
     assert entries[0]["file"] == "IMG_0001-2_001.jpg"
     assert entries[0]["source"] == str(photo)
@@ -115,7 +118,7 @@ def test_manifest_entry_describes_the_crop(cli_args, tmp_path):
     photo = _photo(tmp_path / "shot.jpg")
     detector = _FakeDetector([(100, 200, 200, 500)], [0.9])
 
-    entry = process_image(photo, "shot", detector, None, args)[0]
+    entry = process_image(photo, "shot", detector, None, args)[0][0]
 
     x0, y0, x1, y1 = entry["crop"]
     assert 0 <= x0 < x1 <= 800
@@ -132,7 +135,7 @@ def test_a_crop_with_no_face_is_never_written(cli_args, tmp_path):
     photo = _photo(tmp_path / "shot.jpg")
     detector = _FakeDetector([(100, 200, 200, 500), (300, 200, 400, 500)], [0.9, 0.8])
 
-    entries = process_image(photo, "shot", detector, _FakeReader(blind_to=[1]), args)
+    entries, _ = process_image(photo, "shot", detector, _FakeReader(blind_to=[1]), args)
 
     assert len(entries) == 1
     assert list(tmp_path.glob("shot_*.jpg")) == [tmp_path / "shot_001.jpg"]
@@ -145,7 +148,7 @@ def test_verified_numbering_has_no_gaps(cli_args, tmp_path):
     photo = _photo(tmp_path / "shot.jpg")
     detector = _FakeDetector([(100, 200, 200, 500), (300, 200, 400, 500)], [0.9, 0.8])
 
-    entries = process_image(photo, "shot", detector, _FakeReader(blind_to=[1]), args)
+    entries, _ = process_image(photo, "shot", detector, _FakeReader(blind_to=[1]), args)
 
     assert [entry["index"] for entry in entries] == [1]
     assert entries[0]["file"] == "shot_001.jpg"
@@ -159,7 +162,7 @@ def test_the_reader_is_told_where_the_head_is(cli_args, tmp_path, keypoints):
     detector = _FakeDetector([(60, 60, 160, 300)], [0.9], [keypoints(True)])
     reader = _FakeReader()
 
-    entries = process_image(photo, "shot", detector, reader, args)
+    entries, _ = process_image(photo, "shot", detector, reader, args)
 
     crop_x0, crop_y0 = entries[0]["crop"][:2]
     head = entries[0]["head"]
@@ -178,4 +181,36 @@ def test_no_reader_keeps_every_crop(cli_args, tmp_path):
     photo = _photo(tmp_path / "shot.jpg")
     detector = _FakeDetector([(100, 200, 200, 500), (300, 200, 400, 500)], [0.9, 0.8])
 
-    assert len(process_image(photo, "shot", detector, None, args)) == 2
+    entries, vectors = process_image(photo, "shot", detector, None, args)
+
+    assert len(entries) == 2
+    assert vectors == []
+    assert entries[0]["gender"] is None
+    assert entries[0]["face_score"] is None
+
+
+def test_the_verified_vector_is_kept_for_the_later_stages(cli_args, tmp_path):
+    """Stage 1 already read these faces, so stage 2 need not read them again."""
+    args = cli_args("--no-require-face", "--no-tile")
+    args.out = tmp_path
+    photo = _photo(tmp_path / "shot.jpg")
+    detector = _FakeDetector([(100, 200, 200, 500), (300, 200, 400, 500)], [0.9, 0.8])
+
+    entries, vectors = process_image(photo, "shot", detector, _FakeReader(), args)
+
+    assert len(vectors) == len(entries) == 2
+    assert entries[0]["gender"] == "man"
+    assert entries[0]["face_score"] == 0.8
+
+
+def test_a_dropped_crop_leaves_no_vector_behind(cli_args, tmp_path):
+    """The rows are read back by position, so a spare one would shift them all."""
+    args = cli_args("--no-require-face", "--no-tile")
+    args.out = tmp_path
+    photo = _photo(tmp_path / "shot.jpg")
+    detector = _FakeDetector([(100, 200, 200, 500), (300, 200, 400, 500)], [0.9, 0.8])
+
+    entries, vectors = process_image(photo, "shot", detector, _FakeReader([1]), args)
+
+    assert len(entries) == 1
+    assert [v[0] for v in vectors] == [2]
