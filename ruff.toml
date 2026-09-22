@@ -1,5 +1,9 @@
 [lint]
 select = ["E", "F", "I", "B", "PL", "UP", "D"]
+# PLC0415: torch, ultralytics, rawpy and the other heavy or optional
+# dependencies are imported inside the function that needs them, so that
+# --help stays instant and a missing decoder is a readable error.
+ignore = ["PLC0415"]
 
 [lint.pydocstyle]
 convention = "google"
